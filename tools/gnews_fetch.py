@@ -2,7 +2,7 @@
 """Vai buscar notícias do Brasil e do Rio de Janeiro à API GNews e escreve JSON.
 Uso: GNEWS_API_KEY=... python3 tools/gnews_fetch.py /caminho/saida.json
 A chave NUNCA deve ser guardada no repositório."""
-import json, os, sys, time, urllib.parse, urllib.request
+import json, os, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
 KEY = os.environ.get("GNEWS_API_KEY", "").strip()
@@ -16,9 +16,9 @@ BLOCK = ["instagram.com", "facebook.com", "youtube.com", "cmjornal.pt", "cnnport
 QUERIES = [  # (rotulo, endpoint, parametros)
     ("brasil_top", "top-headlines", {"category": "general", "country": "br", "lang": "pt", "max": 10}),
     ("negocios_top", "top-headlines", {"category": "business", "country": "br", "lang": "pt", "max": 10}),
-    ("rio", "search", {"q": '"Rio de Janeiro"', "country": "br", "lang": "pt", "from": FROM, "sortby": "publishedAt", "max": 10}),
-    ("folha", "search", {"q": "Folha de S.Paulo OR Folha", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
-    ("estadao", "search", {"q": "Estadão OR Estado de S. Paulo", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
+    ("rio", "search", {"q": '"Rio de Janeiro" OR carioca OR fluminense', "in": "title,description", "country": "br", "lang": "pt", "from": FROM, "sortby": "publishedAt", "max": 10}),
+    ("folha", "search", {"q": "Folha de S Paulo", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
+    ("estadao", "search", {"q": "Estadão", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
     ("oglobo", "search", {"q": "O Globo", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
     ("valor", "search", {"q": "Valor Econômico", "country": "br", "lang": "pt", "from": FROM, "max": 10}),
 ]
@@ -26,8 +26,15 @@ QUERIES = [  # (rotulo, endpoint, parametros)
 def call(endpoint, params):
     p = dict(params, apikey=KEY)
     url = f"https://gnews.io/api/v4/{endpoint}?{urllib.parse.urlencode(p)}"
-    with urllib.request.urlopen(url, timeout=30) as r:
-        return json.load(r)
+    for tentativa in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and tentativa < 2:
+                time.sleep(3 * (tentativa + 1))
+                continue
+            raise
 
 res, seen, erros = {}, set(), []
 for label, ep, params in QUERIES:
@@ -47,7 +54,7 @@ for label, ep, params in QUERIES:
                       "publicado": a.get("publishedAt"), "fonte": (a.get("source") or {}).get("name"),
                       "dominio": dom, "preferido": any(dom.endswith(d) for d in PREF)})
     res[label] = itens
-    time.sleep(1.1)  # respeitar limites por segundo
+    time.sleep(2)  # respeitar limites por segundo
 
 json.dump({"gerado": datetime.now(timezone.utc).isoformat(), "erros": erros, "resultados": res},
           open(OUT, "w"), ensure_ascii=False, indent=1)
